@@ -35,7 +35,7 @@ P.S.: если при запуске некоторые контейнеры б�
 
 Для выполнения задания приведите скриншот с отображением метрик утилизации cpu из веб-интерфейса.
 
-Изучите список telegraf inputs. Добавьте в конфигурацию telegraf следующий плагин - docker:
+9. Изучите список telegraf inputs. Добавьте в конфигурацию telegraf следующий плагин - docker:
 ```
 [[inputs.docker]]
   endpoint = "unix:///var/run/docker.sock"
@@ -245,4 +245,168 @@ SLI: Количество 4xx и 5xx ошибок за определённый 
  - Nagios -	(Pull)
 
 **Решение 7**
+
+Развернул TICK через docker-compose
+
+Заработало все далеко не с первого раза
+
+Пришлось сделать сначала вот так
+
+```
+git clone https://github.com/influxdata/sandbox.git
+chown -R root:root sandbox
+chmod -R 1777 sandbox
+```
+после изменить docker-compose файл и добавит туда Z
+
+```
+version: '3'
+services:
+  influxdb:
+    # Full tag list: https://hub.docker.com/r/library/influxdb/tags/
+    build:
+      context: ./images/influxdb/
+      dockerfile: ./${TYPE}/Dockerfile
+      args:
+        INFLUXDB_TAG: ${INFLUXDB_TAG}
+    image: "influxdb"
+    volumes:
+      # Mount for influxdb data directory
+      - ./influxdb/data:/var/lib/influxdb:Z
+      # Mount for influxdb configuration
+      - ./influxdb/config/:/etc/influxdb/:Z
+    ports:
+      # The API for InfluxDB is served on port 8086
+      - "8086:8086"
+      - "8082:8082"
+      # UDP Port
+      - "8089:8089/udp"
+
+  telegraf:
+    # Full tag list: https://hub.docker.com/r/library/telegraf/tags/
+    build:
+      context: ./images/telegraf/
+      dockerfile: ./${TYPE}/Dockerfile
+      args:
+        TELEGRAF_TAG: ${TELEGRAF_TAG}
+    image: "telegraf"
+    environment:
+      HOSTNAME: "telegraf-getting-started"
+    # Telegraf requires network access to InfluxDB
+    links:
+      - influxdb
+    volumes:
+      # Mount for telegraf configuration
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:Z
+      # Mount for Docker API access
+      - /var/run/docker.sock:/var/run/docker.sock:Z
+    depends_on:
+      - influxdb
+
+  kapacitor:
+  # Full tag list: https://hub.docker.com/r/library/kapacitor/tags/
+    build:
+      context: ./images/kapacitor/
+      dockerfile: ./${TYPE}/Dockerfile
+      args:
+        KAPACITOR_TAG: ${KAPACITOR_TAG}
+    image: "kapacitor"
+    volumes:
+      # Mount for kapacitor data directory
+      - ./kapacitor/data/:/var/lib/kapacitor:Z
+      # Mount for kapacitor configuration
+      - ./kapacitor/config/:/etc/kapacitor/:Z
+    # Kapacitor requires network access to Influxdb
+    links:
+      - influxdb
+    ports:
+      # The API for Kapacitor is served on port 9092
+      - "9092:9092"
+
+  chronograf:
+    # Full tag list: https://hub.docker.com/r/library/chronograf/tags/
+    build:
+      context: ./images/chronograf
+      dockerfile: ./${TYPE}/Dockerfile
+      args:
+        CHRONOGRAF_TAG: ${CHRONOGRAF_TAG}
+    image: "chrono_config"
+    environment:
+      RESOURCES_PATH: "/usr/share/chronograf/resources"
+    volumes:
+      # Mount for chronograf database
+      - ./chronograf/data/:/var/lib/chronograf/:Z
+    links:
+      # Chronograf requires network access to InfluxDB and Kapacitor
+      - influxdb
+      - kapacitor
+    ports:
+      # The WebUI for Chronograf is served on port 8888
+      - "8888:8888"
+    depends_on:
+      - kapacitor
+      - influxdb
+      - telegraf
+
+  documentation:
+    build:
+      context: ./documentation
+    ports:
+      - "3010:3000"
+```
+
+и потом сделать 
+
+```
+./sandbox up
+```
+
+и после всех манипуляций, О ЧУДО!!!!! у нас завелись все контенеры и  работает веб интерфейс, и даже показывает верную информацию
+
+![alt text](https://github.com/mezhibo/monitoring-system/blob/fc3245198b6bd152a5f5e3be8775f0abead727d6/IMG/1.jpg)
+
+
+
+
+**Решение 8**
+
+
+Создадим запрос согласно заданию
+
+```
+- В measurments выберите cpu->host->telegraf-getting-started, а в fields выберите usage_system. Внизу появится график утилизации cpu.
+```
+
+![alt text](https://github.com/mezhibo/monitoring-system/blob/fc3245198b6bd152a5f5e3be8775f0abead727d6/IMG/2.jpg)
+
+
+И теперь, чисто для себя, ради эксперимента сделаем запрос на время отклика по http к базе influxdb 
+
+
+![alt text](https://github.com/mezhibo/monitoring-system/blob/fc3245198b6bd152a5f5e3be8775f0abead727d6/IMG/3.jpg)
+
+
+
+
+**Решение 9**
+
+
+В ходе анализа, выяснил что плагин для докера уже прописан в докер компос файле
+
+```
+[[inputs.docker]]
+  endpoint = "unix:///var/run/docker.sock"
+```
+
+Поэтому ничего добавлять и перезапукать не пришлось
+
+И здесь видно что мы плагин длоя докера работает, и мы можем выбирать нужные метрики с докера
+
+
+![alt text](https://github.com/mezhibo/monitoring-system/blob/25e48ae3dfcedd8bacdb8889e1e663ec1501f93e/IMG/4.jpg)
+
+
+Также перейдем на главный дашборд, и видим что там тоже уже присутвуют эти графики
+
+![alt text](https://github.com/mezhibo/monitoring-system/blob/25e48ae3dfcedd8bacdb8889e1e663ec1501f93e/IMG/5.jpg)
 
